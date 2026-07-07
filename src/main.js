@@ -78,12 +78,60 @@ function generateMap() {
   return map;
 }
 
+// === BOAT CUSTOMIZATION ===
+const BOAT_HULLS = {
+  sloop:      { name: 'Sloop',      cost: 150, speed: 3, capacity: 4,  slots: 4, emoji: '⛵' },
+  schooner:   { name: 'Schooner',   cost: 300, speed: 4, capacity: 8,  slots: 6, emoji: '⛵' },
+  brigantine: { name: 'Brigantine', cost: 500, speed: 5, capacity: 12, slots: 8, emoji: '⛵' },
+  clipper:    { name: 'Clipper',    cost: 750, speed: 6, capacity: 16, slots: 10, emoji: '⛵' },
+  tender:     { name: 'Tender',     cost: 100, speed: 2, capacity: 3,  slots: 3, emoji: '🚤' },
+  bark:       { name: 'Bark',       cost: 600, speed: 5, capacity: 14, slots: 8, emoji: '⛵' },
+  galleon:    { name: 'Galleon',    cost: 900, speed: 4, capacity: 20, slots: 10, emoji: '🚢' },
+};
+
+const BOAT_ENGINES = {
+  sail:     { name: 'Wind Sail',    cost: 50,  speedMod: 1.0, fuel: 'Wind',   emoji: '🌬️' },
+  steam:    { name: 'Steam Engine', cost: 150, speedMod: 1.2, fuel: 'Coal',   emoji: '🔥' },
+  diesel:   { name: 'Diesel',       cost: 300, speedMod: 1.4, fuel: 'Diesel', emoji: '⚙️' },
+  electric: { name: 'Electric',     cost: 500, speedMod: 1.3, fuel: 'Battery', emoji: '⚡' },
+  wind_sail:{ name: 'Sail Wing',   cost: 400, speedMod: 1.5, fuel: 'Wind',   emoji: '🌀' },
+};
+
+// Deck modules (FTL-style slots)
+const DECK_MODULES = {
+  galley:    { name: 'Galley',     cost: 80,  emoji: '🍽️', desc: '+Morale' },
+  hold:      { name: 'Hold',       cost: 120, emoji: '📦', desc: '+Capacity' },
+  cabin:     { name: 'Cabin',      cost: 100, emoji: '🛏️', desc: '+Crew space' },
+  mast:      { name: 'Mast',       cost: 150, emoji: '🏗️', desc: '+Speed' },
+  net:       { name: 'Fishing Net', cost: 60,  emoji: '🥅', desc: '+Fish yield' },
+  pot:       { name: 'Crab Pot',   cost: 90,  emoji: '🦀', desc: '+Crab yield' },
+  winch:     { name: 'Winch',      cost: 110, emoji: '🔩', desc: '+Cargo speed' },
+  radar:     { name: 'Radar',      cost: 180, emoji: '📡', desc: '+Survey bonus' },
+  crane:     { name: 'Crane',      cost: 200, emoji: '🏗️', desc: '+Build speed' },
+  life_ring: { name: 'Life Ring',  cost: 70,  emoji: '🔴', desc: '+Rescue rate' },
+  winch_tug: { name: 'Tug Winch',  cost: 130, emoji: '🔗', desc: '+Tug power' },
+};
+
 // === GAME STATE ===
 const state = {
   gold: 500,
   day: 1,
   season: 'Spring',
-  boat: { name: 'The Polar Fluff', hull: 'Sloop', x: 10, y: 8 },
+  boat: {
+    name: 'The Polar Fluff',
+    hull: 'sloop',
+    engine: 'steam',
+    x: 10,
+    y: 8,
+    deck: [
+      { slot: 0, module: 'galley' },
+      { slot: 1, module: 'hold' },
+      { slot: 2, module: 'cabin' },
+      { slot: 3, module: 'mast' },
+    ],
+    // Tracks owned boats (can have multiple)
+    fleet: [],
+  },
   crew: [
     { name: 'Bear', emoji: '🐻', skill: 'Captain' },
     { name: 'Teddy', emoji: '🧸', skill: 'Engineer' },
@@ -95,7 +143,7 @@ const state = {
     { name: 'Fluffy Lighthouse', emoji: '🏮', x: 14, y: 3 },
   ],
   map: null,
-  ui: { tab: 'map', showHelp: true },
+  ui: { tab: 'map', showHelp: true, boatSubTab: 'hull' },
   message: 'Welcome to Bears Boats! Click tiles to navigate. Use tabs below.',
 };
 
@@ -388,21 +436,102 @@ function renderMapPanel(panel) {
 }
 
 function renderBoatPanel(panel) {
-  panel.innerHTML = `
-    <h3 style="margin-bottom:8px; color:#FFD700;">⛵ Boat</h3>
-    <div><strong>${state.boat.name}</strong> (${state.boat.hull})</div>
-    <div style="margin-top:8px; font-size:11px; color:#aaddff;">
-      <strong>Hull:</strong> ${state.boat.hull}<br>
-      <strong>Position:</strong> (${state.boat.x}, ${state.boat.y})<br>
-      <strong>Crew aboard:</strong> ${state.crew.length}<br>
-      <strong>Gold:</strong> ${state.gold}
-    </div>
-    <div style="margin-top:12px;">
-      <strong>Boat Actions:</strong><br>
-      <button onclick="refitBoat()" style="margin:2px; padding:4px 8px; cursor:pointer;">🔧 Refit</button>
-      <button onclick="renameBoat()" style="margin:2px; padding:4px 8px; cursor:pointer;">🏷️ Rename</button>
-    </div>
-  `;
+  const hull = state.boat.hull;
+  const engine = state.boat.engine;
+  const boat = state.boat;
+  const hullData = BOAT_HULLS[hull];
+  const engineData = BOAT_ENGINES[engine];
+  if (!hullData || !engineData) {
+    panel.innerHTML = '<h3>⛵ Boat</h3><div>No boat data!</div>';
+    return;
+  }
+
+  const effectiveSpeed = Math.round(hullData.speed * engineData.speedMod * 10) / 10;
+  const effectiveCapacity = hullData.capacity;
+
+  // Sub-tab buttons for boat panel
+  let subTabs = '';
+  ['hull', 'engine', 'deck', 'stats'].forEach(t => {
+    const label = { hull: 'Hulls', engine: 'Engines', deck: 'Deck Slots', stats: 'Stats' }[t];
+    const active = state.ui.boatSubTab === t ? 'background:#2a4a7a;' : 'background:#1a2a4a;';
+    subTabs += `<button onclick="switchBoatSubTab('${t}')" style="margin:1px;padding:3px 8px;cursor:pointer;${active}color:#ddd;border:1px solid #3a5a8a;border-radius:3px;font-size:11px;">${label}</button>`;
+  });
+
+  let content = '';
+  if (state.ui.boatSubTab === 'hull') {
+    content = '<div style="margin-top:6px;"><strong>Available Hulls:</strong>';
+    for (const [key, h] of Object.entries(BOAT_HULLS)) {
+      const owned = hull === key;
+      const canBuy = !owned && state.gold >= h.cost;
+      const color = owned ? '#4CAF50' : (canBuy ? '#FFD700' : '#888');
+      content += `<div style="margin:4px 0;padding:4px 6px;border:1px solid ${owned ? '#4CAF50' : '#3a5a8a'};border-radius:4px;background:${owned ? 'rgba(76,175,80,0.15)' : 'rgba(10,22,40,0.5)'}">`;
+      content += `<span style="color:${color};">${h.emoji} <strong>${h.name}</strong>`;
+      content += ` — Speed: ${h.speed}, Capacity: ${h.capacity}, Slots: ${h.slots}</span>`;
+      if (owned) {
+        content += ` <span style="color:#4CAF50;">✗ OWNED</span>`;
+      } else {
+        content += ` <span style="color:#aaa;">${h.cost}g</span>`;
+        content += `<button onclick="buyBoatHull('${key}')" ${canBuy ? '' : 'style="opacity:0.5;pointer-events:none;"'} style="margin-left:6px;padding:1px 6px;cursor:pointer;background:#2a4a7a;color:#ddd;border:none;border-radius:3px;">Buy</button>`;
+      }
+      content += `</div>`;
+    }
+    content += '</div>';
+  } else if (state.ui.boatSubTab === 'engine') {
+    content = '<div style="margin-top:6px;"><strong>Available Engines:</strong>';
+    for (const [key, e] of Object.entries(BOAT_ENGINES)) {
+      const owned = engine === key;
+      const canBuy = !owned && state.gold >= e.cost;
+      content += `<div style="margin:4px 0;padding:4px 6px;border:1px solid ${owned ? '#4CAF50' : '#3a5a8a'};border-radius:4px;background:${owned ? 'rgba(76,175,80,0.15)' : 'rgba(10,22,40,0.5)'}">`;
+      content += `<span style="color:${owned ? '#4CAF50' : '#ddd'}">${e.emoji} <strong>${e.name}</strong>`;
+      content += ` — ×${e.speedMod} speed, Fuel: ${e.fuel}</span>`;
+      if (owned) {
+        content += ` <span style="color:#4CAF50;">✗ EQUIPPED</span>`;
+      } else {
+        content += ` <span style="color:#aaa;">${e.cost}g</span>`;
+        content += `<button onclick="buyBoatEngine('${key}')" ${canBuy ? '' : 'style="opacity:0.5;pointer-events:none;"'} style="margin-left:6px;padding:1px 6px;cursor:pointer;background:#2a4a7a;color:#ddd;border:none;border-radius:3px;">Buy</button>`;
+      }
+      content += `</div>`;
+    }
+    content += '</div>';
+  } else if (state.ui.boatSubTab === 'deck') {
+    content = '<div style="margin-top:6px;"><strong>Deck Modules:</strong>';
+    content += '<div style="color:#aaddff;font-size:11px;margin-bottom:6px;">Click to install in the next free slot. Each hull has a limited number of deck slots.</div>';
+    const freeSlot = boat.deck.length;
+    const maxSlots = BOAT_HULLS[boat.hull].slots;
+    content += `<div style="color:#FFD700;margin-bottom:8px;">Slots: ${freeSlot}/${maxSlots} free</div>`;
+    for (const [key, m] of Object.entries(DECK_MODULES)) {
+      const canInstall = state.gold >= m.cost && freeSlot < maxSlots;
+      content += `<div style="margin:3px 0;padding:3px 6px;border:1px solid #3a5a8a;border-radius:4px;background:rgba(10,22,40,0.5)">`;
+      content += `<span>${m.emoji} <strong>${m.name}</strong> — ${m.desc}</span>`;
+      content += ` <span style="color:#aaa;">${m.cost}g</span>`;
+      content += `<button onclick="installModule('${key}')" ${canInstall ? '' : 'style="opacity:0.5;pointer-events:none;"'} style="margin-left:6px;padding:1px 6px;cursor:pointer;background:#2a4a7a;color:#ddd;border:none;border-radius:3px;">Install</button>`;
+      content += `</div>`;
+    }
+    // Show current deck layout
+    content += '<div style="margin-top:8px;"><strong>Current Deck Layout:</strong>';
+    boat.deck.forEach((slot, i) => {
+      const md = DECK_MODULES[slot.module];
+      content += `<div style="margin:2px 0;padding:2px 6px;background:rgba(76,175,80,0.15);border:1px solid #4CAF50;border-radius:3px;">`;
+      content += `Slot ${i}: ${md ? md.emoji + ' ' + md.name : slot.module}`;
+      content += ` <button onclick="removeModule(${i})" style="margin-left:4px;padding:0 4px;background:#555;color:#ddd;border:none;border-radius:2px;cursor:pointer;font-size:10px;">Remove (refund 50%)</button>`;
+      content += `</div>`;
+    });
+    content += '</div>';
+  } else if (state.ui.boatSubTab === 'stats') {
+    content = `<div style="margin-top:6px;">`;
+    content += `<div style="padding:6px;border:1px solid #3a5a8a;border-radius:4px;background:rgba(10,22,40,0.7);line-height:1.8;">`;
+    content += `<strong style="font-size:14px;color:#FFD700;">${boat.name}</strong>`;
+    content += `<div>Hull: ${hullData.emoji} ${hullData.name} (${hullData.cost}g)</div>`;
+    content += `<div>Engine: ${engineData.emoji} ${engineData.name} (×${engineData.speedMod} speed)</div>`;
+    content += `<div>Effective Speed: <strong>${effectiveSpeed}</strong></div>`;
+    content += `<div>Capacity: <strong>${effectiveCapacity}</strong></div>`;
+    content += `<div>Deck Slots: ${boat.deck.length}/${maxSlots} (${maxSlots = hullData.slots})</div>`;
+    content += `<div>Crew: ${state.crew.length} aboard</div>`;
+    content += `</div>`;
+    content += '</div>';
+  }
+
+  panel.innerHTML = `<h3 style="margin-bottom:4px;color:#FFD700;">⛵ Boat</h3>${subTabs}${content}`;
 }
 
 function renderCrewPanel(panel) {
@@ -472,13 +601,100 @@ function updateMessage(msg) {
 }
 
 // === GLOBAL ACTIONS ===
-window.refitBoat = function() {
-  const hulls = ['Sloop', 'Schooner', 'Brigantine', 'Clipper', 'Tender'];
-  const h = prompt('Choose hull:\n' + hulls.join(', '), state.boat.hull);
-  if (h) {
-    state.boat.hull = h;
-    updateMessage(`Refitted to ${h}!`);
-    switchTab(state.ui.tab);
+// === BOAT CUSTOMIZATION ACTIONS ===
+window.switchBoatSubTab = function(tab) {
+  state.ui.boatSubTab = tab;
+  switchTab('boat');
+};
+
+window.buyBoatHull = function(hullKey) {
+  const hull = BOAT_HULLS[hullKey];
+  if (!hull) return;
+  const boat = state.boat;
+  if (boat.hull === hullKey) return;
+  if (state.gold >= hull.cost) {
+    // Sell old hull for 50% refund
+    const oldHull = BOAT_HULLS[boat.hull];
+    if (oldHull) {
+      state.gold += Math.floor(oldHull.cost * 0.5);
+    }
+    state.gold -= hull.cost;
+    // Resize deck slots
+    const oldDeck = boat.deck.slice(0, hull.slots);
+    boat.hull = hullKey;
+    boat.deck = oldDeck;
+    // Fill remaining slots empty
+    while (boat.deck.length < hull.slots) {
+      boat.deck.push({ slot: boat.deck.length, module: 'empty' });
+    }
+    updateStats();
+    updateMessage(`Upgraded to ${hull.emoji} ${hull.name}! Speed: ${hull.speed}, Capacity: ${hull.capacity}, Slots: ${hull.slots}`);
+    switchTab('boat');
+  } else {
+    updateMessage(`Need ${hull.cost} gold for ${hull.name}!`);
+  }
+};
+
+window.buyBoatEngine = function(engineKey) {
+  const engine = BOAT_ENGINES[engineKey];
+  if (!engine) return;
+  if (state.gold >= engine.cost) {
+    // Sell old engine for 50% refund
+    const oldEngine = BOAT_ENGINES[state.boat.engine];
+    if (oldEngine) {
+      state.gold += Math.floor(oldEngine.cost * 0.5);
+    }
+    state.gold -= engine.cost;
+    state.boat.engine = engineKey;
+    updateStats();
+    updateMessage(`Equipped ${engine.emoji} ${engine.name}!`);
+    switchTab('boat');
+  } else {
+    updateMessage(`Need ${engine.cost} gold for ${engine.name}!`);
+  }
+};
+
+window.installModule = function(moduleKey) {
+  const mod = DECK_MODULES[moduleKey];
+  if (!mod) return;
+  const boat = state.boat;
+  const hull = BOAT_HULLS[boat.hull];
+  if (!hull || boat.deck.length >= hull.slots) return;
+  if (state.gold >= mod.cost) {
+    state.gold -= mod.cost;
+    boat.deck.push({ slot: boat.deck.length, module: moduleKey });
+    updateStats();
+    updateMessage(`Installed ${mod.emoji} ${mod.name}!`);
+    switchTab('boat');
+  } else {
+    updateMessage(`Need ${mod.cost} gold for ${mod.name}!`);
+  }
+};
+
+window.removeModule = function(slotIndex) {
+  const boat = state.boat;
+  if (slotIndex < boat.deck.length) {
+    const removed = boat.deck[slotIndex];
+    if (removed && removed.module !== 'empty') {
+      const mod = DECK_MODULES[removed.module];
+      if (mod) {
+        // 50% refund
+        state.gold += Math.floor(mod.cost * 0.5);
+        updateMessage(`Removed ${mod.emoji} ${mod.name}. Got ${Math.floor(mod.cost * 0.5)}g refund.`);
+      }
+    }
+    boat.deck.splice(slotIndex, 1);
+    updateStats();
+    switchTab('boat');
+  }
+};
+
+window.renameBoat = function() {
+  const n = prompt('Boat name:', state.boat.name);
+  if (n) {
+    state.boat.name = n;
+    updateMessage(`Renamed boat to "${n}"!`);
+    switchTab('boat');
   }
 };
 
