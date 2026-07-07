@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.vscode/
+.idea/
+build_game.py
+generate_data.py
+clean_setup.py
+setup.py
