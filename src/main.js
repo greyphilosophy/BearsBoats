@@ -183,6 +183,7 @@ function init() {
     <span>💰 <span id="stat-gold">${state.gold}</span></span>
     <span>📅 Day <span id="stat-day">${state.day}</span></span>
     <span>👥 <span id="stat-crew">${state.crew.length}</span> crew</span>
+    <span id="stat-weather" style="margin-left:8px;"></span>
   `;
   uiPanel.appendChild(statsBar);
 
@@ -197,6 +198,7 @@ function init() {
     { id: 'crew', label: '🧸 Crew' },
     { id: 'platforms', label: '🏗️ Platforms' },
     { id: 'operations', label: '⚓ Ops' },
+    { id: 'quests', label: '📜 Quests' },
   ];
 
   tabs.forEach(t => {
@@ -408,6 +410,9 @@ function switchTab(tabId) {
       break;
     case 'operations':
       renderOperationsPanel(panel);
+      break;
+    case 'quests':
+      renderQuestsPanel(panel);
       break;
   }
 }
@@ -763,6 +768,98 @@ window.navigateTo = function() {
     moveBoat(x, y);
   }
 };
+
+// === FUN FEATURES ===
+// Weather system
+const WEATHER_TYPES = [
+  { name: 'Sunny', emoji: '☀️', overlay: 'rgba(255,255,255,0.06)' },
+  { name: 'Foggy', emoji: '🌫️', overlay: 'rgba(200,200,210,0.25)' },
+  { name: 'Stormy', emoji: '⛅', overlay: 'rgba(150,150,200,0.15)' },
+  { name: 'Aurora', emoji: '🌌', overlay: 'rgba(136,255,136,0.12)' },
+  { name: 'Snowy', emoji: '❄️', overlay: 'rgba(255,255,255,0.2)' },
+  { name: 'Calm', emoji: '🌅', overlay: 'rgba(136,170,221,0.1)' },
+];
+let weatherIdx = 0;
+
+// Random encounters
+const ENCOUNTERS = [
+  { text: '🦆 A duck in a barrel gives you coins!', gold: 15 },
+  { text: '🐋 Whale song boosts morale!', gold: 0 },
+  { text: '🪙 Treasure floating on the surface!', gold: 50 },
+  { text: '🦀 A giant crab pinches the mast!', gold: -10 },
+  { text: '🧸 A lost teddy bear joins the crew!', gold: 20 },
+  { text: '🐦 Seagulls steal from the galley!', gold: -15 },
+  { text: '🧜 A mermaid offers a pearl!', gold: 30 },
+  { text: '🍀 Lucky clover day!', gold: 25 },
+  { text: '🌊 Smooth sailing — nothing happens!', gold: 0 },
+  { text: '⭐ A shooting star grants wishes!', gold: 40 },
+];
+
+// Quests
+const QUESTS = [
+  { name: 'First Catch', emoji: '🐟', desc: 'Visit fishing ground (tiles 16-20, 10-14)', reward: 25, done: false },
+  { name: 'Crab Hunter', emoji: '🦀', desc: 'Visit crabbed area (tiles 20-24, 14-18)', reward: 35, done: false },
+  { name: 'Island Explorer', emoji: '🏝️', desc: 'Land on the island at (26, 6)', reward: 30, done: false },
+  { name: 'Storm Braver', emoji: '🌪️', desc: 'Sail through the storm zone (top-right)', reward: 40, done: false },
+  { name: 'Ice Breaker', emoji: '🧊', desc: 'Sail through the ice fields (top-left)', reward: 35, done: false },
+  { name: 'Golden Pocket', emoji: '💰', desc: 'Reach 500 gold total', reward: 50, done: false },
+];
+
+function tryEncounter() {
+  if (Math.random() < 0.25) {
+    const e = ENCOUNTERS[Math.floor(Math.random() * ENCOUNTERS.length)];
+    state.gold += e.gold;
+    return e;
+  }
+  return null;
+}
+
+function checkQuests() {
+  const bx = state.boat.x, by = state.boat.y;
+  if (!QUESTS[0].done && bx >= 16 && bx <= 20 && by >= 10 && by <= 14) {
+    QUESTS[0].done = true; state.gold += 25;
+    return { msg: '🐟 Quest complete: First Catch! +25g' };
+  }
+  if (!QUESTS[1].done && bx >= 20 && bx <= 24 && by >= 14 && by <= 18) {
+    QUESTS[1].done = true; state.gold += 35;
+    return { msg: '🦀 Quest complete: Crab Hunter! +35g' };
+  }
+  if (!QUESTS[2].done && state.map[by] && state.map[by][bx] === TILES.ISLAND) {
+    QUESTS[2].done = true; state.gold += 30;
+    return { msg: '🏝️ Quest complete: Island Explorer! +30g' };
+  }
+  if (!QUESTS[3].done && bx >= 24 && bx <= 30 && by <= 2) {
+    QUESTS[3].done = true; state.gold += 40;
+    return { msg: '🌪️ Quest complete: Storm Braver! +40g' };
+  }
+  if (!QUESTS[4].done && bx <= 6 && by <= 2) {
+    QUESTS[4].done = true; state.gold += 35;
+    return { msg: '🧊 Quest complete: Ice Breaker! +35g' };
+  }
+  if (!QUESTS[5].done && state.gold >= 500) {
+    QUESTS[5].done = true; state.gold += 50;
+    return { msg: '💰 Quest complete: Golden Pocket! +50g' };
+  }
+  return null;
+}
+
+function renderQuestsPanel(panel) {
+  let html = '<h3 style="margin-bottom:8px; color:#FFD700;">📜 Quests</h3>';
+  let completed = 0;
+  QUESTS.forEach(q => {
+    if (q.done) completed++;
+    const statusColor = q.done ? '#4CAF50' : '#aaa';
+    const statusText = q.done ? '✅ Done' : '🔵 Active';
+    html += `<div style="margin:6px 0;padding:6px 8px;border:1px solid ${q.done ? '#4CAF50' : '#3a5a8a'};border-radius:4px;background:${q.done ? 'rgba(76,175,80,0.15)' : 'rgba(10,22,40,0.5)'}">`;
+    html += `<span style="color:${statusColor};">${q.emoji} <strong>${q.name}</strong> — ${q.desc}<br>`;
+    html += `<span style="font-size:10px;color:${statusColor}">Reward: ${q.reward}g | ${statusText}</span></span>`;
+    html += '</div>';
+  });
+  html += `<div style="margin-top:10px;color:#aaddff;font-size:11px;">Completed: ${completed}/${QUESTS.length}</div>`;
+  panel.innerHTML = html;
+}
+
+// === END FUN FEATURES ===
 
 // === ANIMATION LOOP ===
 function animate() {
