@@ -5,8 +5,8 @@ import {
   EQUIPMENT_TYPES,
   EQUIPMENT_CATEGORIES,
   calculateEquipmentBonuses,
-  getAvailableEquipment,
 } from './equipment.js';
+import { CREW_TYPES } from './crew.js';
 
 // === CONFIG ===
 const TILE_SIZE = 32;
@@ -109,6 +109,8 @@ const state = {
     deck: [],
   },
   crew: [],
+  nextCrewId: 1,
+  payroll: { totalPerDay: 0, lastPaidDay: 0 },
   platforms: [
     { name: 'Starting Harbor', emoji: '⚓', x: 10, y: 8 },
   ],
@@ -320,30 +322,41 @@ function moveBoat(x, y) {
 
   const tile = state.map[y][x];
   const tileName = TILE_NAMES[tile] || 'Ocean';
-  const bonuses = calculateEquipmentBonuses(state.boat.deck);
+  const equipmentBonuses = calculateEquipmentBonuses(state.boat.deck);
+  const crewBonuses = calculateCrewBonuses();
 
-  // Check for fishing/crabbing with equipment bonuses
+  // Payroll: deduct daily wages for each move (day = 1 trip)
+  const totalWages = getCrewPayroll();
+  if (totalWages > 0 && state.day > state.payroll.lastPaidDay) {
+    const daysSince = state.day - state.payroll.lastPaidDay;
+    const cost = totalWages * daysSince;
+    state.gold -= cost;
+    state.payroll.lastPaidDay = state.day;
+    updateMessage(`Payroll: ${cost}g for ${daysSince} day(s).`);
+  }
+
+  // Check for fishing/crabbing with equipment + crew bonuses
   let result = '';
   if (tile === TILES.FISHING) {
     let fish = Math.floor(Math.random() * 4) + 1;
-    fish = Math.max(1, Math.floor(fish * bonuses.fishMultiplier));
+    fish = Math.max(1, Math.floor(fish * equipmentBonuses.fishMultiplier * (1 + crewBonuses.fishMultiplier)));
     const gold = fish * 5;
     state.gold += gold;
     result = `Fished! Caught ${fish} fish for ${gold} gold.`;
   } else if (tile === TILES.CRABBED) {
     let crab = Math.floor(Math.random() * 3) + 1;
-    crab = Math.max(1, Math.floor(crab * bonuses.crabMultiplier));
+    crab = Math.max(1, Math.floor(crab * equipmentBonuses.crabMultiplier * (1 + crewBonuses.crabMultiplier)));
     const gold = crab * 8;
     state.gold += gold;
     result = `Crabbing! Caught ${crab} crabs for ${gold} gold.`;
   } else if (tile === TILES.STORM) {
     let cost = Math.floor(Math.random() * 10) + 5;
-    cost = Math.max(1, Math.floor(cost * (1 - bonuses.stormReduction)));
+    cost = Math.max(1, Math.floor(cost * (1 - equipmentBonuses.stormReduction) * (1 - crewBonuses.stormReduction)));
     state.gold -= cost;
     result = `Storm! Lost ${cost} gold.`;
   } else if (tile === TILES.ISLAND) {
     let find = Math.floor(Math.random() * 20) + 10;
-    find = Math.max(10, Math.floor(find * (1 + bonuses.visitBonus)));
+    find = Math.max(10, Math.floor(find * (1 + equipmentBonuses.visitBonus) * (1 + crewBonuses.visitBonus)));
     state.gold += find;
     result = `Island! Found ${find} gold treasure!`;
   }
@@ -546,11 +559,110 @@ function renderBoatPanel(panel) {
 }
 
 function renderCrewPanel(panel) {
-  panel.innerHTML = `
-    <h3 style="margin-bottom:8px; color:#FFD700;">🧸 Crew (${state.crew.length})</h3>
-    ${state.crew.map(c => `<div style="margin:4px 0;">${c.emoji} <strong>${c.name}</strong> — ${c.skill}</div>`).join('')}
+  const payroll = state.payroll;
+  // Recalculate daily payroll
+  let totalWages = 0;
+  for (const c of state.crew) {
+    const ct = CREW_TYPES[c.type];
+    if (ct) totalWages += ct.baseWage;
+  }
+  payroll.totalPerDay = totalWages;
+
+  // Show stats header
+  panel.innerHTML = '';
+
+  // Crew stats summary
+  const statsDiv = document.createElement('div');
+  statsDiv.style.cssText = 'background: rgba(10, 22, 40, 0.6); border: 1px solid #2a4a7a; border-radius: 6px; padding: 8px; margin-bottom: 10px;';
+  statsDiv.innerHTML = `
+    <h3 style="margin-bottom:6px;color:#FFD700;font-size:14px;">🧸 Crew</h3>
+    <div style="font-size:11px;color:#aaddff;margin-bottom:4px;">${state.crew.length} aboard | Daily payroll: ${totalWages}g</div>
+    <div style="font-size:10px;color:#aaa;">Payroll deducted each day when moving</div>
   `;
+  panel.appendChild(statsDiv);
+
+  // Current crew list
+  const crewDiv = document.createElement('div');
+  crewDiv.style.cssText = 'background: rgba(10, 22, 40, 0.8); border: 1px solid #2a4a7a; border-radius: 6px; padding: 8px; margin-bottom: 10px;';
+  crewDiv.innerHTML = '<div style="font-size:12px;color:#aaddff;margin-bottom:6px;">📋 Crew Roster:</div>';
+  if (state.crew.length === 0) {
+    crewDiv.innerHTML += '<div style="font-size:11px;color:#888;font-style:italic;">Crew is empty — hire some crew below!</div>';
+  } else {
+    for (let i = 0; i < state.crew.length; i++) {
+      const c = state.crew[i];
+      const ct = CREW_TYPES[c.type];
+      const name = ct ? `${ct.emoji} ${ct.name}` : '🐻 Unknown';
+      crewDiv.innerHTML += `<div style="display:flex;align-items:center;margin:2px 0;padding:3px 6px;background:rgba(76,175,80,0.1);border-radius:3px;">
+        <span style="color:#aaddff;font-size:11px;">${name} — ${c.skill || ct?.skill || 'General'} (wage: ${ct ? ct.baseWage + 'g' : '?'})</span>
+        <button onclick="fireCrew(${i})" style="margin-left:auto;background:#555;color:#ddd;border:none;border-radius:2px;padding:1px 5px;cursor:pointer;font-size:10px;">Fire</button>
+      </div>`;
+      if (ct && ct.desc) {
+        crewDiv.innerHTML += `<div style="margin-left:20px;font-size:9px;color:#888;">${ct.desc}</div>`;
+      }
+    }
+  }
+  panel.appendChild(crewDiv);
+
+  // Available crew types to hire
+  const hireDiv = document.createElement('div');
+  hireDiv.style.cssText = 'margin-bottom: 8px;';
+  hireDiv.innerHTML = '<div style="font-size:12px;font-weight:bold;color:#FFD700;margin-bottom:6px;">📋 Available Crew:</div>';
+
+  for (const [key, ct] of Object.entries(CREW_TYPES)) {
+    const hireCost = ct.baseWage * 10;
+    const canHire = state.gold >= hireCost;
+    const crewDiv2 = document.createElement('div');
+    crewDiv2.style.cssText = 'margin:3px 0;padding:4px 6px;border:1px solid #3a5a8a;border-radius:4px;background:rgba(10,22,40,0.5);';
+    crewDiv2.innerHTML = `
+      <div style="font-size:11px;">${ct.emoji} <strong>${ct.name}</strong> — ${ct.skill} (${ct.desc})</div>
+      <div style="font-size:9px;color:#aaa;margin-top:2px;">Wage: ${ct.baseWage}g/day | Hire cost: ${hireCost}g</div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:3px;">
+        <span></span>
+        <button onclick="hireCrew('${key}')" ${canHire ? '' : 'style="opacity:0.4;pointer-events:none;"'} style="padding:2px 8px;background:#2a4a7a;color:#ddd;border:none;border-radius:3px;cursor:pointer;font-size:10px;">Hire (${hireCost}g)</button>
+      </div>`;
+    hireDiv.appendChild(crewDiv2);
+  }
+  panel.appendChild(hireDiv);
 }
+
+window.hireCrew = function(type) {
+  const ct = CREW_TYPES[type];
+  if (!ct) return;
+  const hireCost = ct.baseWage * 10;
+  if (state.gold >= hireCost) {
+    state.gold -= hireCost;
+    state.crew.push({
+      id: state.nextCrewId++,
+      type: type,
+      name: ct.name,
+      emoji: ct.emoji,
+      skill: ct.skill,
+    });
+    updateStats();
+    updateMessage(`Hired ${ct.emoji} ${ct.name} as ${ct.skill}!`);
+    switchTab('crew');
+  } else {
+    updateMessage(`Need ${hireCost}g to hire ${ct.name}!`);
+    switchTab('crew');
+  }
+};
+
+window.fireCrew = function(index) {
+  if (index < state.crew.length) {
+    const c = state.crew[index];
+    const ct = CREW_TYPES[c.type];
+    state.crew.splice(index, 1);
+    if (ct) {
+      const refund = Math.floor(ct.baseWage * 5);
+      state.gold += refund;
+      updateMessage(`Fired ${c.emoji} ${c.name}. +${refund}g severance!`);
+    } else {
+      updateMessage('Crew member fired.');
+    }
+    updateStats();
+    switchTab('crew');
+  }
+};
 
 function renderPlatformsPanel(panel) {
   panel.innerHTML = `
@@ -593,6 +705,42 @@ function updateMessage(msg) {
   state.message = msg;
   const mb = document.getElementById('message-bar');
   if (mb) mb.textContent = msg;
+}
+
+// === CREW SYSTEM ===
+function calculateCrewBonuses() {
+  const bonuses = {
+    fishMultiplier: 0,
+    crabMultiplier: 0,
+    stormReduction: 0,
+    visitBonus: 0,
+  };
+  for (const c of state.crew) {
+    const ct = CREW_TYPES[c.type];
+    if (!ct || !ct.bonuses) continue;
+    for (const [key, val] of Object.entries(ct.bonuses)) {
+      if (key === 'allBonus') {
+        bonuses.fishMultiplier += val;
+        bonuses.crabMultiplier += val;
+        bonuses.visitBonus += val;
+        continue;
+      }
+      if (key === 'moraleBonus') continue;
+      if (bonuses[key] !== undefined) {
+        bonuses[key] += val;
+      }
+    }
+  }
+  return bonuses;
+}
+
+function getCrewPayroll() {
+  let total = 0;
+  for (const c of state.crew) {
+    const ct = CREW_TYPES[c.type];
+    if (ct) total += ct.baseWage;
+  }
+  return total;
 }
 
 // === GLOBAL ACTIONS ===
