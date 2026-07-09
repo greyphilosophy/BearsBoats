@@ -7,6 +7,7 @@ import {
   calculateEquipmentBonuses,
 } from './equipment.js';
 import { CREW_TYPES } from './crew.js';
+import { SKILL_TYPES, createSkillSet, gainXp, skillBonus, getSkillBonuses } from './skills.js';
 
 // === CONFIG ===
 const TILE_SIZE = 32;
@@ -110,6 +111,7 @@ const state = {
   },
   crew: [],
   nextCrewId: 1,
+  captainSkills: null,
   payroll: { totalPerDay: 0, lastPaidDay: 0 },
   platforms: [
     { name: 'Starting Harbor', emoji: '⚓', x: 10, y: 8 },
@@ -121,6 +123,7 @@ const state = {
 };
 
 // === INIT ===
+state.captainSkills = createSkillSet();
 const map = generateMap();
 state.map = map;
 
@@ -170,6 +173,7 @@ function init() {
     { id: 'boat', label: '⛵ Boat' },
     { id: 'shop', label: '🏪 Shop' },
     { id: 'crew', label: '🧸 Crew' },
+    { id: 'skills', label: '⭐ Skills' },
     { id: 'platforms', label: '🏗️ Platforms' },
     { id: 'operations', label: '⚓ Ops' },
   ];
@@ -364,6 +368,35 @@ function moveBoat(x, y) {
   state.day++;
   state.season = ['Spring', 'Summer', 'Autumn', 'Winter'][Math.floor((state.day - 1) / 10) % 4];
   state.firstCatch = true; // Reset first catch for the new day
+
+  // Grant XP for activities
+  if (tile === TILES.FISHING) {
+    gainXp(state.captainSkills, 'fishing', 2);
+    for (const c of state.crew) {
+      if (c.skills) gainXp(c.skills, 'fishing', 1);
+    }
+  } else if (tile === TILES.CRABBED) {
+    gainXp(state.captainSkills, 'crabbing', 2);
+    for (const c of state.crew) {
+      if (c.skills) gainXp(c.skills, 'crabbing', 1);
+    }
+  } else if (tile === TILES.STORM) {
+    gainXp(state.captainSkills, 'navigation', 2);
+    for (const c of state.crew) {
+      if (c.skills) gainXp(c.skills, 'navigation', 1);
+    }
+  } else if (tile === TILES.ISLAND) {
+    gainXp(state.captainSkills, 'seamanship', 2);
+    for (const c of state.crew) {
+      if (c.skills) gainXp(c.skills, 'seamanship', 1);
+    }
+  } else if (tile === TILES.PLATFORM) {
+    gainXp(state.captainSkills, 'trading', 2);
+    for (const c of state.crew) {
+      if (c.skills) gainXp(c.skills, 'trading', 1);
+    }
+  }
+
   state.message = `Moved to ${tileName} at (${x}, ${y})${result ? '. ' + result : ''}`;
 
   updateStats();
@@ -403,6 +436,9 @@ function switchTab(tabId) {
       break;
     case 'shop':
       renderShopPanel(panel);
+      break;
+    case 'skills':
+      renderSkillsPanel(panel);
       break;
   }
 }
@@ -637,6 +673,7 @@ window.hireCrew = function(type) {
       name: ct.name,
       emoji: ct.emoji,
       skill: ct.skill,
+      skills: createSkillSet(),
     });
     updateStats();
     updateMessage(`Hired ${ct.emoji} ${ct.name} as ${ct.skill}!`);
@@ -707,7 +744,50 @@ function updateMessage(msg) {
   if (mb) mb.textContent = msg;
 }
 
-// === CREW SYSTEM ===
+// === SKILLS PANEL ===
+function renderSkillsPanel(panel) {
+  panel.innerHTML = '';
+
+  // Captain skills
+  const capDiv = document.createElement('div');
+  capDiv.style.cssText = 'background: rgba(10, 22, 40, 0.6); border: 1px solid #2a4a7a; border-radius: 6px; padding: 8px; margin-bottom: 10px;';
+  capDiv.innerHTML = '<h3 style="margin-bottom:6px;color:#FFD700;font-size:14px;">🐻 Captain Skills</h3>';
+
+  if (state.captainSkills) {
+    for (const [key, def] of Object.entries(SKILL_TYPES)) {
+      const skill = state.captainSkills[key];
+      const barWidth = skill.maxXp > 0 ? Math.min(100, skill.xp / skill.maxXp * 100) : 0;
+      const barHtml = `<div style="height:12px;background:rgba(255,255,255,0.15);border-radius:3px;overflow:hidden;"><div style="height:100%;width:${barWidth}%;background:#4CAF50;border-radius:3px;"></div></div>`;
+      const infoHtml = `<div style="margin:3px 0;padding:2px 0;">${def.emoji} <strong>${def.name}</strong> Lv.${skill.level}/${def.maxLevel}</div>`;
+      capDiv.innerHTML += infoHtml + barHtml;
+    }
+  }
+  panel.appendChild(capDiv);
+
+  // Crew skills
+  if (state.crew.length > 0) {
+    const crewDiv = document.createElement('div');
+    crewDiv.style.cssText = 'margin-top: 10px;';
+    crewDiv.innerHTML = '<div style="font-size:12px;font-weight:bold;color:#FFD700;margin-bottom:6px;">Crew Skills</div>';
+
+    for (const c of state.crew) {
+      if (!c.skills) continue;
+      const card = document.createElement('div');
+      card.style.cssText = 'background: rgba(10, 22, 40, 0.4); border: 1px solid #2a4a7a; border-radius: 4px; padding: 6px; margin: 4px 0;';
+      card.innerHTML = `<div style="font-size:11px;color:#FFD700;margin-bottom:4px;">${c.emoji} ${c.name} (${c.skill})</div>`;
+      for (const [key, def] of Object.entries(SKILL_TYPES)) {
+        const skill = c.skills[key];
+        const barWidth = skill.maxXp > 0 ? Math.min(100, skill.xp / skill.maxXp * 100) : 0;
+        card.innerHTML += `<div style="height:8px;background:rgba(255,255,255,0.1);border-radius:2px;margin:2px 0;overflow:hidden;"><div style="height:100%;width:${barWidth}%;background:#889aaa;border-radius:2px;"></div></div>`;
+        card.innerHTML += `<div style="font-size:9px;color:#aaa;margin-bottom:4px;">${def.emoji} ${def.name} Lv.${skill.level} (${skill.xp}/${skill.maxXp} XP)</div>`;
+      }
+      panel.appendChild(card);
+    }
+    panel.appendChild(crewDiv);
+  }
+}
+
+// === GLOBAL ACTIONS ===
 function calculateCrewBonuses() {
   const bonuses = {
     fishMultiplier: 0,
